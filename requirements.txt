@@ -1,0 +1,13 @@
+streamlit
+requests
+folium
+streamlit-folium
+shapely
+pandas
+google-genai
+numpy
+rasterio
+matplotlib
+contextily
+plotly
+leafmap
