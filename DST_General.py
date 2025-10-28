@@ -273,7 +273,6 @@ def generate_risk_interpretation(df_risks: pd.DataFrame, kpis: list, scenarios: 
     except Exception as e:
         return f"An unexpected error occurred during risk interpretation generation: {e}"
 
-
 @st.cache_data(ttl=3600)
 def build_folium_map_object(center, zoom, polygon_data, drawing_key):
     
@@ -402,6 +401,13 @@ def create_radar_chart_plotly(kpis_df: pd.DataFrame, selected_series: list, titl
     fig.update_layout(polar=dict(radialaxis=dict(range=[1,5], tickvals=[1,2,3,4,5])), title=title, height=650)
     return fig
 
+
+def update_risk_matrix():
+    edited_data = st.session_state["risk_matrix_editor"]
+    if isinstance(edited_data, pd.DataFrame):
+        st.session_state["risk_matrix_data"] = edited_data.to_dict()
+        st.session_state["interpretation_report"] = ""
+
 if "map_center" not in st.session_state:
     st.session_state["map_center"] = [51.1657, 10.4515]
 if "map_zoom" not in st.session_state:
@@ -430,7 +436,7 @@ scenarios = {
     "CI_HNG": "Condition after hazard but protected by both grey and nature-based solutions (HNG)"
 }
 
-initial_data = {k: {scenario_key: 1 for scenario_key in scenarios} for k in kpis}
+initial_data = {scenario_key: {k: 1 for k in kpis} for scenario_key in scenarios}
 if "risk_matrix_data" not in st.session_state:
     st.session_state["risk_matrix_data"] = pd.DataFrame(initial_data, index=kpis).to_dict()
 
@@ -728,22 +734,28 @@ with st.expander("Level 1"):
                 width="small"
             )
 
-        edited_df = st.data_editor(
+        st.data_editor(
             df,
             column_config=column_config,
             num_rows="fixed",
-            key="risk_matrix_editor"
+            key="risk_matrix_editor", # Key is used to retrieve edited data in callback
+            on_change=update_risk_matrix # FIX: Call function to save state immediately
         )
         
-        st.session_state["risk_matrix_data"] = edited_df.to_dict()
-        st.session_state["interpretation_report"] = "" 
+        # The session state update is now handled by the update_risk_matrix callback.
+        # st.session_state["risk_matrix_data"] = edited_df.to_dict() # REMOVED
+        # st.session_state["interpretation_report"] = "" # REMOVED
+        
 
         st.markdown("---")
         st.subheader("🔷 Radar Plot of Input Risks")
         try:
-            kpis_for_plot = edited_df.reset_index()
+            # Read directly from the updated session state
+            kpis_for_plot = pd.DataFrame(st.session_state["risk_matrix_data"], index=kpis).reset_index()
         except Exception:
-            kpis_for_plot = pd.DataFrame(edited_df).reset_index()
+            # Fallback in case of an issue
+            kpis_for_plot = pd.DataFrame(df).reset_index()
+
 
         available_series = kpis_for_plot.columns[1:].tolist()
 
