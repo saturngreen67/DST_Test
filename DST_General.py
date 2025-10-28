@@ -738,22 +738,18 @@ with st.expander("Level 1"):
             df,
             column_config=column_config,
             num_rows="fixed",
-            key="risk_matrix_editor", # Key is used to retrieve edited data in callback
-            on_change=update_risk_matrix # FIX: Call function to save state immediately
+            key="risk_matrix_editor",
+            on_change=update_risk_matrix
         )
         
-        # The session state update is now handled by the update_risk_matrix callback.
-        # st.session_state["risk_matrix_data"] = edited_df.to_dict() # REMOVED
-        # st.session_state["interpretation_report"] = "" # REMOVED
+
         
 
         st.markdown("---")
         st.subheader("🔷 Radar Plot of Input Risks")
         try:
-            # Read directly from the updated session state
             kpis_for_plot = pd.DataFrame(st.session_state["risk_matrix_data"], index=kpis).reset_index()
         except Exception:
-            # Fallback in case of an issue
             kpis_for_plot = pd.DataFrame(df).reset_index()
 
 
