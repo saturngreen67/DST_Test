@@ -273,6 +273,7 @@ def generate_risk_interpretation(df_risks: pd.DataFrame, kpis: list, scenarios: 
     except Exception as e:
         return f"An unexpected error occurred during risk interpretation generation: {e}"
 
+
 @st.cache_data(ttl=3600)
 def build_folium_map_object(center, zoom, polygon_data, drawing_key):
     
@@ -401,13 +402,6 @@ def create_radar_chart_plotly(kpis_df: pd.DataFrame, selected_series: list, titl
     fig.update_layout(polar=dict(radialaxis=dict(range=[1,5], tickvals=[1,2,3,4,5])), title=title, height=650)
     return fig
 
-
-def update_risk_matrix():
-    edited_data = st.session_state["risk_matrix_editor"]
-    if isinstance(edited_data, pd.DataFrame):
-        st.session_state["risk_matrix_data"] = edited_data.to_dict()
-        st.session_state["interpretation_report"] = ""
-
 if "map_center" not in st.session_state:
     st.session_state["map_center"] = [51.1657, 10.4515]
 if "map_zoom" not in st.session_state:
@@ -439,9 +433,6 @@ scenarios = {
 initial_data = {scenario_key: {k: 1 for k in kpis} for scenario_key in scenarios}
 if "risk_matrix_data" not in st.session_state:
     st.session_state["risk_matrix_data"] = pd.DataFrame(initial_data, index=kpis).to_dict()
-
-if "last_radar_plot" not in st.session_state:
-    st.session_state["last_radar_plot"] = None
 
 if "interpretation_report" not in st.session_state:
     st.session_state["interpretation_report"] = ""
@@ -734,24 +725,22 @@ with st.expander("Level 1"):
                 width="small"
             )
 
-        st.data_editor(
+        edited_df = st.data_editor(
             df,
             column_config=column_config,
             num_rows="fixed",
-            key="risk_matrix_editor",
-            on_change=update_risk_matrix
+            key="risk_matrix_editor"
         )
         
-
-        
+        st.session_state["risk_matrix_data"] = edited_df.to_dict()
+        st.session_state["interpretation_report"] = "" 
 
         st.markdown("---")
         st.subheader("🔷 Radar Plot of Input Risks")
         try:
-            kpis_for_plot = pd.DataFrame(st.session_state["risk_matrix_data"], index=kpis).reset_index()
+            kpis_for_plot = edited_df.reset_index()
         except Exception:
-            kpis_for_plot = pd.DataFrame(df).reset_index()
-
+            kpis_for_plot = pd.DataFrame(edited_df).reset_index()
 
         available_series = kpis_for_plot.columns[1:].tolist()
 
@@ -765,23 +754,18 @@ with st.expander("Level 1"):
                 if checked:
                     selected_series.append(s)
             
-            if st.button("Plot", key="plot_radar_btn"):
-                if not selected_series:
-                    st.warning("Please select at least one scenario/column to plot.")
-                else:
-                    try:
-                        radar_fig = create_radar_chart_plotly(kpis_for_plot, selected_series, title="Risk Radar - Input Ratings (1-5)")
-                        if radar_fig is None:
-                            st.error("Unable to generate radar figure. Check your input format.")
-                        else:
-                            st.session_state["last_radar_plot"] = radar_fig
-                            st.plotly_chart(radar_fig, use_container_width=True, key="new_radar_plot")
-                    except Exception as e:
-                        st.error(f"Failed to create radar plot: {e}")
-                        st.exception(e)
-        
-        if st.session_state["last_radar_plot"]:
-             st.plotly_chart(st.session_state["last_radar_plot"], use_container_width=True, key="stored_radar_plot")
+            if not selected_series:
+                st.warning("Please select at least one scenario/column to plot.")
+            else:
+                try:
+                    radar_fig = create_radar_chart_plotly(kpis_for_plot, selected_series, title="Risk Radar - Input Ratings (1-5)")
+                    if radar_fig is None:
+                        st.error("Unable to generate radar figure. Check your input format.")
+                    else:
+                        st.plotly_chart(radar_fig, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Failed to create radar plot: {e}")
+                    st.exception(e)
 
         st.markdown("---")
         with st.expander("Interpretation"):
