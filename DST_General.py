@@ -413,8 +413,8 @@ def create_risk_heatmap_plotly(df_risk: pd.DataFrame, df_loss: pd.DataFrame, sce
     
     # Create a DataFrame for plotting
     plot_df = pd.DataFrame({
-        "Risk Rating (Condition of the CI)": risk_values,
-        "Extent of Loss Rating (CI)": loss_values,
+        "Risk Rating (X)": risk_values,
+        "Loss Rating (CI)": loss_values,
         "KPI": kpis
     }).dropna()
 
@@ -779,7 +779,7 @@ with st.expander("Level 1"):
             )
         }
         
-        # Build the full column configuration (used for Risk Rating table and defining loss columns)
+
         for key, desc in scenarios.items():
             column_config[key] = st.column_config.NumberColumn(
                 label=key,
@@ -791,8 +791,8 @@ with st.expander("Level 1"):
                 width="small"
             )
 
-        # --- FIRST TABLE: RISK RATING (X) ---
-        st.markdown("### 1. Risk Rating (X)")
+
+        st.markdown("### 1. Risk Rating (Critical infrastructure Condition)")
         edited_df = st.data_editor(
             df,
             column_config=column_config,
@@ -801,41 +801,41 @@ with st.expander("Level 1"):
         )
         st.session_state["risk_matrix_data"] = edited_df.to_dict()
         
-        # --- SECOND TABLE: LOSS RATING (CI) ---
-        st.markdown("### 2. Loss Rating (CI)")
+
+        st.markdown("### 2. Extent of Loss Rating (CI)")
         df_loss_data = st.session_state["loss_matrix_data"]
         df_loss = pd.DataFrame(df_loss_data, index=kpis)
         df_loss.index.name = "KPI / Indicator"
         
-        # Logic to exclude the 'CI' column for display/editing
+
         loss_display_columns = [col for col in df_loss.columns if col != 'CI']
         df_loss_display = df_loss[loss_display_columns]
 
-        # Create a specific column config for loss that only has the displayed columns
+
         column_config_loss = column_config.copy()
         if 'CI' in column_config_loss:
             del column_config_loss['CI']
 
         loss_edited_df_display = st.data_editor(
-            df_loss_display, # Pass the filtered DataFrame
-            column_config=column_config_loss, # Pass the filtered column config
+            df_loss_display,
+            column_config=column_config_loss,
             num_rows="fixed",
             key="loss_matrix_editor"
         )
         
-        # Reconstruct the full DataFrame to save to session state, preserving the original 'CI' column data
+
         if 'CI' in df_loss.columns:
             ci_column_original = df_loss['CI'].copy()
             reconstructed_df_loss = loss_edited_df_display.assign(CI=ci_column_original)
             st.session_state["loss_matrix_data"] = reconstructed_df_loss.to_dict()
         else:
-            # If for some reason 'CI' was already missing, just save the edited data
+
             st.session_state["loss_matrix_data"] = loss_edited_df_display.to_dict()
 
         st.markdown("---")
         st.subheader("Radar Plot of Input Risks")
         try:
-            # Use the Risk Matrix (X) data for the primary Radar Plot
+
             kpis_for_plot = edited_df.reset_index()
         except Exception:
             kpis_for_plot = pd.DataFrame(edited_df).reset_index()
@@ -867,17 +867,16 @@ with st.expander("Level 1"):
                     st.error(f"Failed to create radar plot: {e}")
                     st.exception(e)
         
-        # --- NEW SECTION: FOUR CONSEUQNENCE HEATMAPS ---
+
         st.markdown("---")
         st.subheader("Consequence Assessment Matrices (Risk vs. Loss)")
         st.caption("Each plot compares the Risk Rating (X) and Loss Rating (CI) for the selected scenario across all 5 KPIs.")
         
-        # --- MODIFIED: Scenarios to plot (4 plots excluding CI) ---
+
         scenarios_to_plot = ["CI_H", "CI_HG", "CI_HN", "CI_HNG"] 
         plot_cols = st.columns(2)
         
-        # Validate input for plotting
-        # Note: We must check ALL scenarios that are in the input tables, not just the ones we plot.
+
         all_risk_values_flat = pd.DataFrame(st.session_state["risk_matrix_data"]).values.flatten()
         risk_values_series = pd.Series(pd.to_numeric(all_risk_values_flat, errors='coerce'))
         valid_risk_input = all(risk_values_series.between(1, 5, inclusive='both').fillna(False))
@@ -889,7 +888,7 @@ with st.expander("Level 1"):
         if not valid_risk_input or not valid_loss_input:
              st.warning("Please ensure all cells in both tables contain valid integers between 1 and 5 to generate the matrix plots.")
         else:
-            # We use the full edited_df and reconstructed_df_loss (from session state) for plotting.
+
             df_for_plot_loss = pd.DataFrame(st.session_state["loss_matrix_data"], index=kpis)
 
             for i, scenario in enumerate(scenarios_to_plot):
