@@ -19,6 +19,7 @@ from matplotlib.colors import ListedColormap
 import contextily as cx
 import traceback
 import plotly.graph_objects as go
+import plotly.express as px 
 
 KOPPEN_COLORS = np.array([
     [0,0,255], [0,120,255], [70,170,250], [255,0,0], [255,150,150],
@@ -354,8 +355,8 @@ def make_overpass_request(query, max_retries=2):
         try:
             response = requests.get(overpass_url, params={'data': query}, timeout=180)
             if response.status_code == 200: return response
-            elif response.status_code == 400: st.error("⚠️ Overpass API Error: Bad Request (400). Check query syntax."); return response
-            elif response.status_code == 429: st.error("❌ **Overpass API Error: Too Many Requests (429).**"); return response
+            elif response.status_code == 400: st.error("Overpass API Error: Bad Request (400). Check query syntax."); return response
+            elif response.status_code == 429: st.error("**Overpass API Error: Too Many Requests (429).**"); return response
             elif response.status_code == 504:
                 if attempt < max_retries: time.sleep(5); continue
                 else: st.error("⚠️ Overpass API Error: Server timeout (504)."); return response
@@ -402,6 +403,77 @@ def create_radar_chart_plotly(kpis_df: pd.DataFrame, selected_series: list, titl
     fig.update_layout(polar=dict(radialaxis=dict(range=[1,5], tickvals=[1,2,3,4,5])), title=title, height=650)
     return fig
 
+# --- FUNCTION FOR HEATMAP PLOT ---
+def create_risk_heatmap_plotly(df_risk: pd.DataFrame, df_loss: pd.DataFrame, scenario_key: str, kpis: list):
+    
+    # 1. Prepare data: Extract the specific scenario column from both tables
+    # Convert to numeric to ensure compatibility
+    risk_values = pd.to_numeric(df_risk[scenario_key], errors='coerce')
+    loss_values = pd.to_numeric(df_loss[scenario_key], errors='coerce')
+    
+    # Create a DataFrame for plotting
+    plot_df = pd.DataFrame({
+        "Risk Rating (X)": risk_values,
+        "Loss Rating (CI)": loss_values,
+        "KPI": kpis
+    }).dropna()
+
+    # Calculate combined Severity for coloring
+    plot_df["Severity"] = plot_df["Risk Rating (X)"] * plot_df["Loss Rating (CI)"]
+    
+    # 2. Create the Scatter Plot (Matrix style)
+    fig = px.scatter(
+        plot_df,
+        x="Risk Rating (X)",
+        y="Loss Rating (CI)",
+        color="Severity", 
+        text="KPI",
+        size=[10] * len(plot_df),
+        hover_data=["KPI", "Risk Rating (X)", "Loss Rating (CI)", "Severity"],
+        title=f"Consequence Matrix: Scenario {scenario_key}",
+        labels={
+            "Risk Rating (X)": "Critical Infrastructure Condition Rating (1-5)",
+            "Loss Rating (CI)": "Extent of Loss Rating (1-5)"
+        },
+        color_continuous_scale=px.colors.sequential.Reds,
+        range_x=[0.5, 5.5], 
+        range_y=[0.5, 5.5],
+        height=480, # Adjusted height for squarer plots
+    )
+    
+    # 3. Customize for a 5x5 Matrix look
+    fig.update_layout(
+        xaxis=dict(tickvals=list(range(1, 6)), tickmode='array', showgrid=True, zeroline=False),
+        yaxis=dict(tickvals=list(range(1, 6)), tickmode='array', showgrid=True, zeroline=False),
+        height=480, # Match px.scatter height
+        coloraxis_showscale=False # Hides the colorbar for the scatter plot
+    )
+    
+    # Add an opaque heatmap background for the "heat map back grounds" effect
+    grid_x, grid_y = np.meshgrid(np.arange(1, 6), np.arange(1, 6))
+    grid_z = grid_x * grid_y
+    
+    # Add Heatmap (This is fig.data[1])
+    fig.add_trace(go.Heatmap(
+        z=grid_z,
+        x=np.arange(1, 6),
+        y=np.arange(1, 6),
+        colorscale=px.colors.sequential.Reds,
+        # Remove colorbar definition and hide scale
+        showscale=False, # Hides the colorbar for the heatmap
+        zmin=1, # 1*1
+        zmax=25, # 5*5
+        hoverinfo='skip',
+        opacity=0.3,
+    )) 
+
+    # Selectively update the Scatter trace (fig.data[0]) for text positioning.
+    fig.update_traces(selector={'type': 'scatter'}, textposition='top center')
+    
+    return fig
+# --- END FUNCTION ---
+
+
 if "map_center" not in st.session_state:
     st.session_state["map_center"] = [51.1657, 10.4515]
 if "map_zoom" not in st.session_state:
@@ -430,9 +502,16 @@ scenarios = {
     "CI_HNG": "Condition after hazard but protected by both grey and nature-based solutions (HNG)"
 }
 
-initial_data = {scenario_key: {k: 1 for k in kpis} for scenario_key in scenarios}
+initial_data = {scenario_key: {k: 3 for k in kpis} for scenario_key in scenarios} # Changed default to 3
 if "risk_matrix_data" not in st.session_state:
     st.session_state["risk_matrix_data"] = pd.DataFrame(initial_data, index=kpis).to_dict()
+
+# --- NEW SESSION STATE FOR LOSS MATRIX ---
+initial_loss_data = {scenario_key: {k: 3 for k in kpis} for scenario_key in scenarios} # Same structure
+if "loss_matrix_data" not in st.session_state:
+    st.session_state["loss_matrix_data"] = pd.DataFrame(initial_loss_data, index=kpis).to_dict()
+# --- END NEW SESSION STATE ---
+
 
 if "interpretation_report" not in st.session_state:
     st.session_state["interpretation_report"] = ""
@@ -453,7 +532,8 @@ else:
     st.warning("⚠️ GEMINI_API_KEY not found. AI report feature disabled. Please set the key.")
     st.session_state["gemini_client"] = None
 
-st.set_page_config(page_title="General Decision Support Tool", layout="centered")
+# 1. WIDEN LAYOUT
+st.set_page_config(page_title="General Decision Support Tool", layout="wide")
 st.title("General Decision Support Tool")
 
 
@@ -495,7 +575,7 @@ with st.expander("Information Extraction and Mapping"):
 
     with search_col:
         location_name = st.text_input("Search for a location to center the map:", value="Berlin, Germany")
-        if st.button("Go to Location 🗺️"):
+        if st.button("Go to Location"):
             with st.spinner(f"Geocoding '{location_name}'..."):
                 coords = geocode_location(location_name)
                 if coords:
@@ -606,17 +686,17 @@ with st.expander("Information Extraction and Mapping"):
             center_lon = st.session_state["extracted_data"].get("center_lon")
 
             if st.session_state["extracted_data"].get("elements"):
-                st.success(f"Successfully processed {len(elements)} OSM items ✅ (Area: {area_sq_km:.4f} km²)")
+                st.success(f"Successfully processed {len(elements)} OSM items (Area: {area_sq_km:.4f} km²)")
             
             st.markdown("---")
-            st.subheader("🤖 Geographical & Infrastructure Context Report (Gemini)")
+            st.subheader("Geographical & Infrastructure Context Report")
             if context_report:
                 st.markdown(context_report)
             else:
                 st.warning("The Geographical & Infrastructure Report failed to generate or the AI feature is disabled.")
 
             st.markdown("---")
-            st.subheader("🗺️ Köppen-Geiger Climate Classification Map (Visual)")
+            st.subheader("Köppen-Geiger Climate Classification Map (Visual)")
             
             if center_lat is not None and center_lon is not None:
                 plot_result, _ = generate_koppen_map_plot(center_lat, center_lon)
@@ -629,14 +709,14 @@ with st.expander("Information Extraction and Mapping"):
                 st.warning("Cannot display Köppen map: Center coordinates for the drawn polygon could not be determined.")
 
             st.markdown("---")
-            st.subheader("☀️ Climate Interpretation Report (Gemini)")
+            st.subheader("Climate Interpretation Report")
             if koppen_report:
                 st.markdown(koppen_report)
             else:
                 st.warning("The Climate Interpretation Report failed to generate or the AI feature is disabled.")
 
-            with st.expander("🔍 View Extracted Infrastructure Data Tables (OpenStreetMap Raw Data)"):
-                st.subheader("📊 Detailed Infrastructure Data Tables")
+            with st.expander("View Extracted Infrastructure Data Tables (OpenStreetMap Raw Data)"):
+                st.subheader("Detailed Infrastructure Data Tables")
                 has_data_for_any_infra = False
                 
                 for infra in selected_infras:
@@ -662,31 +742,17 @@ with st.expander("Information Extraction and Mapping"):
 
 with st.expander("Level 1"):
     
-    st.header("Perceived Risks Assessment 📊")
-
-    kpis = [
-        "Safety, Reliability and Security (SRS)", 
-        "Availability and Maintainability (AM)", 
-        "Economy (EC)", 
-        "Environment (EV)", 
-        "Health and Politics (HP)"
-    ]
-    scenarios = {
-        "CI": "Current condition of the critical infrastructure",
-        "CI_H": "Condition after natural hazard (H)",
-        "CI_HG": "Condition after hazard but protected by grey measures (HG)",
-        "CI_HN": "Condition after hazard but protected by nature-based solutions (HN)",
-        "CI_HNG": "Condition after hazard but protected by both grey and nature-based solutions (HNG)"
-    }
+    # --- Existing Risk Assessment Section ---
+    st.header("Perceived Risks Assessment")
 
     df_data = st.session_state["risk_matrix_data"]
     df = pd.DataFrame(df_data, index=kpis)
     df.index.name = "KPI / Indicator"
 
-    st.subheader("Stakeholders' Opinion About Infrastructure Condition")
-    st.info("Please provide integers between **1 (best condition)** and **5 (worst condition)** for each cell. Values outside this range are not allowed.")
+    st.subheader("Input Ratings: Risk and Loss")
+    st.info("Please provide integers between **1 (best/lowest)** and **5 (worst/highest)** for each cell.")
 
-    matrix_tab, scenario_key_tab = st.tabs(["📊 Risk Matrix Input (1-5)", "📝 Scenario & KPI Definitions"])
+    matrix_tab, scenario_key_tab = st.tabs(["Input Matrices (1-5)", "Scenario & KPI Definitions"])
 
     with scenario_key_tab:
         st.markdown("### Key Performance Indicators (KPIs)")
@@ -705,7 +771,6 @@ with st.expander("Level 1"):
             st.markdown(f"**{html_abbr}** ({desc})", unsafe_allow_html=True)
 
     with matrix_tab:
-        st.markdown("### Input Risks Rating (1 to 5)")
         
         column_config = {
             "KPI / Indicator": st.column_config.TextColumn(
@@ -714,30 +779,63 @@ with st.expander("Level 1"):
             )
         }
         
+        # Build the full column configuration (used for Risk Rating table and defining loss columns)
         for key, desc in scenarios.items():
             column_config[key] = st.column_config.NumberColumn(
                 label=key,
                 help=desc,
                 min_value=1,
                 max_value=5,
-                default=1,
+                default=3,
                 format="%d",
                 width="small"
             )
 
+        # --- FIRST TABLE: RISK RATING (X) ---
+        st.markdown("### 1. Risk Rating (X)")
         edited_df = st.data_editor(
             df,
             column_config=column_config,
             num_rows="fixed",
             key="risk_matrix_editor"
         )
-        
         st.session_state["risk_matrix_data"] = edited_df.to_dict()
-        st.session_state["interpretation_report"] = "" 
+        
+        # --- SECOND TABLE: LOSS RATING (CI) ---
+        st.markdown("### 2. Loss Rating (CI)")
+        df_loss_data = st.session_state["loss_matrix_data"]
+        df_loss = pd.DataFrame(df_loss_data, index=kpis)
+        df_loss.index.name = "KPI / Indicator"
+        
+        # Logic to exclude the 'CI' column for display/editing
+        loss_display_columns = [col for col in df_loss.columns if col != 'CI']
+        df_loss_display = df_loss[loss_display_columns]
+
+        # Create a specific column config for loss that only has the displayed columns
+        column_config_loss = column_config.copy()
+        if 'CI' in column_config_loss:
+            del column_config_loss['CI']
+
+        loss_edited_df_display = st.data_editor(
+            df_loss_display, # Pass the filtered DataFrame
+            column_config=column_config_loss, # Pass the filtered column config
+            num_rows="fixed",
+            key="loss_matrix_editor"
+        )
+        
+        # Reconstruct the full DataFrame to save to session state, preserving the original 'CI' column data
+        if 'CI' in df_loss.columns:
+            ci_column_original = df_loss['CI'].copy()
+            reconstructed_df_loss = loss_edited_df_display.assign(CI=ci_column_original)
+            st.session_state["loss_matrix_data"] = reconstructed_df_loss.to_dict()
+        else:
+            # If for some reason 'CI' was already missing, just save the edited data
+            st.session_state["loss_matrix_data"] = loss_edited_df_display.to_dict()
 
         st.markdown("---")
-        st.subheader("🔷 Radar Plot of Input Risks")
+        st.subheader("Radar Plot of Input Risks")
         try:
+            # Use the Risk Matrix (X) data for the primary Radar Plot
             kpis_for_plot = edited_df.reset_index()
         except Exception:
             kpis_for_plot = pd.DataFrame(edited_df).reset_index()
@@ -748,17 +846,19 @@ with st.expander("Level 1"):
             st.info("No scenario columns available to plot. Please configure the risk matrix columns.")
         else:
             st.markdown("Select scenarios to include in the radar plot:")
+            cols_radar = st.columns(len(available_series))
             selected_series = []
-            for s in available_series:
-                checked = st.checkbox(s, value=True, key=f"radar_checkbox_{s}")
-                if checked:
-                    selected_series.append(s)
+            for i, s in enumerate(available_series):
+                with cols_radar[i]:
+                    checked = st.checkbox(s, value=True, key=f"radar_checkbox_{s}")
+                    if checked:
+                        selected_series.append(s)
             
             if not selected_series:
                 st.warning("Please select at least one scenario/column to plot.")
             else:
                 try:
-                    radar_fig = create_radar_chart_plotly(kpis_for_plot, selected_series, title="Risk Radar - Input Ratings (1-5)")
+                    radar_fig = create_radar_chart_plotly(kpis_for_plot, selected_series, title="Risk Radar - Risk Ratings (X)")
                     if radar_fig is None:
                         st.error("Unable to generate radar figure. Check your input format.")
                     else:
@@ -766,13 +866,48 @@ with st.expander("Level 1"):
                 except Exception as e:
                     st.error(f"Failed to create radar plot: {e}")
                     st.exception(e)
+        
+        # --- NEW SECTION: FOUR CONSEUQNENCE HEATMAPS ---
+        st.markdown("---")
+        st.subheader("Consequence Assessment Matrices (Risk vs. Loss)")
+        st.caption("Each plot compares the Risk Rating (X) and Loss Rating (CI) for the selected scenario across all 5 KPIs.")
+        
+        # --- MODIFIED: Scenarios to plot (4 plots excluding CI) ---
+        scenarios_to_plot = ["CI_H", "CI_HG", "CI_HN", "CI_HNG"] 
+        plot_cols = st.columns(2)
+        
+        # Validate input for plotting
+        # Note: We must check ALL scenarios that are in the input tables, not just the ones we plot.
+        all_risk_values_flat = pd.DataFrame(st.session_state["risk_matrix_data"]).values.flatten()
+        risk_values_series = pd.Series(pd.to_numeric(all_risk_values_flat, errors='coerce'))
+        valid_risk_input = all(risk_values_series.between(1, 5, inclusive='both').fillna(False))
+        
+        all_loss_values_flat = pd.DataFrame(st.session_state["loss_matrix_data"]).values.flatten()
+        loss_values_series = pd.Series(pd.to_numeric(all_loss_values_flat, errors='coerce'))
+        valid_loss_input = all(loss_values_series.between(1, 5, inclusive='both').fillna(False))
+        
+        if not valid_risk_input or not valid_loss_input:
+             st.warning("Please ensure all cells in both tables contain valid integers between 1 and 5 to generate the matrix plots.")
+        else:
+            # We use the full edited_df and reconstructed_df_loss (from session state) for plotting.
+            df_for_plot_loss = pd.DataFrame(st.session_state["loss_matrix_data"], index=kpis)
+
+            for i, scenario in enumerate(scenarios_to_plot):
+                try:
+                    fig = create_risk_heatmap_plotly(edited_df, df_for_plot_loss, scenario, kpis)
+                    with plot_cols[i % 2]:
+                        st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    with plot_cols[i % 2]:
+                         st.error(f"Failed to generate plot for scenario {scenario}: {e}")
+                    
 
         st.markdown("---")
         with st.expander("Interpretation"):
             
             if st.session_state.get("gemini_client"):
                 
-                if st.button("Generate Interpretation Report 🤖", type="primary", help="Analyze the current risk matrix using Gemini with contextual search."):
+                if st.button("Generate Interpretation Report", type="primary", help="Analyze the current risk matrix using Gemini with contextual search."):
                     
                     if not 'risk_matrix_data' in st.session_state:
                         st.error("Please populate the Risk Matrix table first before generating an interpretation.")
@@ -790,20 +925,20 @@ with st.expander("Level 1"):
                         
                         st.session_state["interpretation_report"] = interpretation_report
                         
-                        st.subheader("🤖 Risk Matrix Interpretation Report (Gemini)")
+                        st.subheader("Risk Matrix Interpretation Report")
                         if interpretation_report:
                             st.markdown(interpretation_report)
                         else:
                             st.warning("The Risk Matrix Interpretation Report failed to generate.")
                 
                 if st.session_state["interpretation_report"]:
-                    st.subheader("🤖 Risk Matrix Interpretation Report (Gemini)")
+                    st.subheader("Risk Matrix Interpretation Report")
                     st.markdown(st.session_state["interpretation_report"])
                 else:
                     st.info("Click the button above to generate the AI interpretation report based on the current matrix data.")
 
             else:
-                st.warning("⚠️ Gemini client not initialized. AI interpretation feature disabled. Ensure GEMINI_API_KEY is available.")
+                st.warning("Gemini client not initialized. AI interpretation feature disabled. Ensure GEMINI_API_KEY is available.")
 
 
 with st.expander("Level 2"):
