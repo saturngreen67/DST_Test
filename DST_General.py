@@ -413,8 +413,8 @@ def create_risk_heatmap_plotly(df_risk: pd.DataFrame, df_loss: pd.DataFrame, sce
     
     # Create a DataFrame for plotting
     plot_df = pd.DataFrame({
-        "Risk Rating (X)": risk_values,
-        "Loss Rating (CI)": loss_values,
+        "Risk Rating (Condition of the CI)": risk_values,
+        "Extent of Loss Rating (CI)": loss_values,
         "KPI": kpis
     }).dropna()
 
