@@ -118,6 +118,7 @@ def generate_context_report(center_lat, center_lon, area_sq_km, elements):
 
     center_coord_str = f"{center_lat:.4f}, {center_lon:.4f}"
     
+    # Original summary (optional - you can keep or remove it)
     infra_counts = {}
     for element in elements:
         tags = element.get('tags', {})
@@ -133,11 +134,26 @@ def generate_context_report(center_lat, center_lon, area_sq_km, elements):
     if not extracted_infrastructure_list:
         extracted_infrastructure_list = "- No specific infrastructure elements found using the simple filters."
 
+    # NEW: Create detailed string with all elements and tags (using JSON for structure)
+    import json
+    detailed_elements = []
+    for element in elements:
+        elem_info = {
+            'type': element.get('type', 'Unknown'),
+            'id': element.get('id', 'N/A'),
+            'tags': element.get('tags', {})  # Includes all tags like 'surface' or 'material'
+        }
+        detailed_elements.append(elem_info)
+    
+    detailed_str = json.dumps(detailed_elements, indent=2)  # Format as JSON string
+    
     system_instruction = (
         "You are an expert geographical and infrastructure analyst. Your task is to generate a report "
         "by analyzing the provided OpenStreetMap data and geographical coordinate. "
         "**You must use the Google Search tool** to find contextual data, elevation, and topography for the given coordinate. "
         "Follow the specified structured output format strictly. DO NOT include any climate or weather information."
+        # NEW: Optional - Add guidance for detailed data
+        " Analyze all provided tags in the detailed infrastructure data for deeper insights, such as materials or surfaces."
     )
     
     user_prompt = f"""
@@ -149,6 +165,10 @@ def generate_context_report(center_lat, center_lon, area_sq_km, elements):
         
     2. **Extracted OpenStreetMap Infrastructure Data (Summary of {len(elements)} Items):**
     {extracted_infrastructure_list}
+    
+    # NEW: Add full detailed data section
+    3. **Detailed OpenStreetMap Elements (Full Tags and Metadata):**
+    {detailed_str}
 
     **REPORT INSTRUCTIONS:**
     Please use the coordinate and the extracted infrastructure details to search the internet for more contextual information about this geographical area.
